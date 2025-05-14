@@ -1,0 +1,13 @@
+[package]
+name = "tagge_rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.38", features = ["derive"] }
+git2 = "0.20.2"
+miette = { version = "7.6.0", features = ["fancy"] }
+semver = "1.0.26"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
