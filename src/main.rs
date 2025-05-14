@@ -73,6 +73,18 @@ fn main() -> MietteResult<()> {
         )
     });
 
+    let head_ref = repo.head().into_diagnostic()?;
+    if head_ref.is_branch() {
+        if let Some(branch_name) = head_ref.shorthand() {
+            if !["main", "master"].contains(&branch_name) {
+                println!(
+                    "Warning: You are on branch '{}', not 'main' or 'master'!\n",
+                    branch_name
+                );
+            }
+        }
+    }
+
     println!("Latest tag:\n  SHA: {}", latest_tag.id());
     println!("  Version: v{}\n", latest_version);
     if let Some(new_version) = new_version {
