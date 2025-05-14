@@ -66,7 +66,11 @@ fn main() -> MietteResult<()> {
     let commits = commits_between_tag_and_head(&repo, &latest_tag)?;
     let commit_msgs = commits.iter().map(|c| {
         let summary = c.summary().unwrap_or_default();
-        format!("{}, {}", c.id(), summary)
+        format!(
+            "{} {}",
+            c.id().to_string().chars().take(7).collect::<String>(),
+            summary
+        )
     });
 
     println!("Latest tag:\n  SHA: {}", latest_tag.id());
