@@ -78,8 +78,12 @@ fn main() -> MietteResult<()> {
         if let Some(branch_name) = head_ref.shorthand() {
             if !["main", "master"].contains(&branch_name) {
                 println!(
-                    "Warning: You are on branch '{}', not 'main' or 'master'!\n",
-                    branch_name
+                    "{}",
+                    format!(
+                        "Warning: You are on branch '{}', not 'main' or 'master'!\n",
+                        branch_name
+                    )
+                    .red()
                 );
             }
         }
