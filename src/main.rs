@@ -15,6 +15,8 @@ use miette::IntoDiagnostic;
 use miette::Result as MietteResult;
 use miette::miette;
 use semver::Version;
+use std::io;
+use std::io::Write;
 use std::path::Path;
 
 fn main() -> MietteResult<()> {
@@ -27,34 +29,37 @@ fn main() -> MietteResult<()> {
 
     let repo = repository_from_path(&cli_args.path())?;
 
+    // Check branch
+    let head_ref = repo.head().into_diagnostic()?;
+    if head_ref.is_branch() {
+        if let Some(branch_name) = head_ref.shorthand() {
+            // Notify user main/master is not selected
+            if !["main", "master"].contains(&branch_name) {
+                println!(
+                    "{}",
+                    format!(
+                        "Note: You are on branch '{}', not 'main' or 'master'!\n",
+                        branch_name
+                    )
+                    .yellow()
+                );
+            }
+            // No need to confirm if:
+            if !cli_args.dry_run // dryrun
+                && cli_args.bump.is_some() // no bump
+                && !confirm_continue("Are you sure you want to create a tag on this branch?")
+            {
+                return Ok(());
+            }
+        }
+    }
+
     if !cli_args.no_fetch {
-        tracing::info!("Performing git fetch to get latest tags!");
-        let mut origin = repo
-            .find_remote("origin")
-            .into_diagnostic()
-            .wrap_err("Could not find git remote origin!")?;
-
-        // Prepare callback authentication.
-        let callbacks = make_ssh_callbacks()?;
-
-        let mut fetch_options = FetchOptions::new();
-        fetch_options.remote_callbacks(callbacks);
-
-        // Fetch tags
-        origin
-            .fetch(
-                &[
-                    "refs/tags/*:refs/tags/*",
-                    "refs/heads/*:refs/remotes/origin/*",
-                ],
-                Some(&mut fetch_options),
-                None,
-            )
-            .into_diagnostic()?;
+        git_fetch(&repo)?;
     }
 
     let Some((latest_tag, latest_version)) = latest_tag(&repo) else {
-        println!("No tags found!");
+        println!("No tags found! Please create the first tag manually!");
         return Ok(());
     };
 
@@ -64,7 +69,10 @@ fn main() -> MietteResult<()> {
         .as_ref()
         .map(|bump| bump_version(&latest_version, bump));
 
+    // Get commits between the tag and head
     let commits = commits_between_tag_and_head(&repo, &latest_tag)?;
+
+    // Make nice messages "<SHA:7> <commit summary>" TODO PR
     let commit_msgs = commits.iter().map(|c| {
         let summary = c.summary().unwrap_or_default();
         format!(
@@ -140,6 +148,33 @@ fn repository_from_path(path: &Path) -> MietteResult<Repository> {
     }
 }
 
+fn git_fetch(repo: &Repository) -> MietteResult<()> {
+    tracing::info!("Performing git fetch to get latest tags!");
+    let mut origin = repo
+        .find_remote("origin")
+        .into_diagnostic()
+        .wrap_err("Could not find git remote origin!")?;
+
+    // Prepare callback authentication.
+    let callbacks = make_ssh_callbacks()?;
+
+    let mut fetch_options = FetchOptions::new();
+    fetch_options.remote_callbacks(callbacks);
+
+    // Fetch tags
+    origin
+        .fetch(
+            &[
+                "refs/tags/*:refs/tags/*",
+                "refs/heads/*:refs/remotes/origin/*",
+            ],
+            Some(&mut fetch_options),
+            None,
+        )
+        .into_diagnostic()?;
+    Ok(())
+}
+
 fn latest_tag(repo: &Repository) -> Option<(Tag, Version)> {
     let tag_names = repo.tag_names(None).ok()?;
     let mut latest: Option<(Version, &str)> = None;
@@ -206,3 +241,27 @@ fn commits_between_tag_and_head<'a>(
     }
     Ok(commits)
 }
+
+fn confirm_continue(question: &str) -> bool {
+    let mut input = String::with_capacity(5);
+    loop {
+        print!("{question} (y/N): ");
+        io::stdout().flush().expect("Failed to flush stdout!");
+        input.clear();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Unable to read Stdin");
+        let answer = input.trim().to_lowercase();
+        if answer.is_empty() || ["n", "no"].contains(&answer.as_str()) {
+            println!("Aborted!");
+            return false;
+        }
+        if ["y", "yes"].contains(&answer.as_str()) {
+            println!();
+            return true;
+        }
+        input.clear();
+    }
+}
+
+

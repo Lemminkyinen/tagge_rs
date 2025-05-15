@@ -6,13 +6,15 @@ use clap::{Parser, ValueEnum};
 #[command(name = "tagge_rs")]
 #[command(about = "Semantic versioning and tagging CLI tool for Git repos", long_about = None)]
 pub struct CliArgs {
-    /// by patch (e.g. v1.0.0 -> v1.0.1)
-    ///
-    /// by minor (e.g. v1.0.0 -> v1.1.0)
-    ///
-    /// by major (e.g. v1.0.0 -> v2.0.0)
-    #[arg(value_enum)]
+    #[arg(
+        value_enum,
+        help = " by patch (e.g. v1.0.0 -> v1.0.1)\n by minor (e.g. v1.0.0 -> v1.1.0)\n by major (e.g. v1.0.0 -> v2.0.0)\n"
+    )]
     pub bump: Option<VersionBump>,
+
+    /// Dry run, only print the tag command, do not create a tag
+    #[arg(short, long)]
+    pub dry_run: bool,
 
     /// Path to the Git repository (default: current directory)
     #[arg(short, long, default_value_t = String::from("."))]
@@ -22,6 +24,7 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_fetch: bool,
 
+    /// Add additional debug logging
     #[arg(long)]
     pub debug: bool,
 }
