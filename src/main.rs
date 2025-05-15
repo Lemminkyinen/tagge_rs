@@ -15,6 +15,7 @@ use miette::IntoDiagnostic;
 use miette::Result as MietteResult;
 use miette::miette;
 use semver::Version;
+use std::fmt::Write as FmtWrite;
 use std::io;
 use std::io::Write;
 use std::path::Path;
@@ -63,12 +64,6 @@ fn main() -> MietteResult<()> {
         return Ok(());
     };
 
-    // If we want to bump
-    let new_version = cli_args
-        .bump
-        .as_ref()
-        .map(|bump| bump_version(&latest_version, bump));
-
     // Get commits between the tag and head
     let commits = commits_between_tag_and_head(&repo, &latest_tag)?;
 
@@ -82,43 +77,30 @@ fn main() -> MietteResult<()> {
         )
     });
 
-    let head_ref = repo.head().into_diagnostic()?;
-    let mut in_master = true;
-    if head_ref.is_branch() {
-        if let Some(branch_name) = head_ref.shorthand() {
-            if !["main", "master"].contains(&branch_name) {
-                println!(
-                    "{}",
-                    format!(
-                        "Note: You are on branch '{}', not 'main' or 'master'!\n",
-                        branch_name
-                    )
-                    .yellow()
-                );
-                in_master = false;
-            }
-        }
-    }
-
-    println!("Latest tag:\n  SHA: {}", latest_tag.id());
-    println!("  Version: v{}\n", latest_version);
-
-    if let Some(new_version) = new_version {
-        if in_master {
-            println!("New version: v{}\n", new_version);
-            println!("Command: \ngit tag -a v{new_version} -s -m \"Release v{new_version}\n");
-            print!("Changelog:");
-            for msg in commit_msgs {
-                print!("\n- {}", msg);
-            }
-            println!("\"")
+    // If we want to bump
+    let (new_tag, new_version) = if let Some(bump) = cli_args.bump {
+        if !cli_args.dry_run {
+            let new_version = bump_version(&latest_version, &bump);
+            let new_tag = create_tag(
+                &repo,
+                &new_version,
+                &generate_changelog(commit_msgs.clone()),
+            )?;
+            (Some(new_tag), Some(new_version))
+        } else {
+            (None, None)
         }
     } else {
-        println!("Commits:");
-        for msg in commit_msgs {
-            println!("  {}", msg);
-        }
-    }
+        (None, None)
+    };
+
+    print_info(
+        &latest_tag,
+        &latest_version,
+        new_tag.as_ref(),
+        new_version.as_ref(),
+        commit_msgs,
+    );
 
     Ok(())
 }
@@ -242,6 +224,59 @@ fn commits_between_tag_and_head<'a>(
     Ok(commits)
 }
 
+fn create_tag<'a>(
+    repo: &'a Repository,
+    new_version: &Version,
+    changelog: &str,
+) -> MietteResult<Tag<'a>> {
+    // Get HEAD commit
+    // let obj = repo
+    //     .head()
+    //     .into_diagnostic()?
+    //     .peel(ObjectType::Commit)
+    //     .into_diagnostic()?;
+    // let commit = obj.as_commit().ok_or(miette!("HEAD is not a commit"))?;
+
+    // Tagger signature (from git config or fallback)
+    // let tagger = repo.signature().into_diagnostic()?;
+    // let tag_name = format!("v{new_version}");
+    // Create the tag
+    // let tag_oid = repo
+    //     .tag(&tag_name, &obj, &tagger, "testiii", false)
+    //     .into_diagnostic()?;
+
+    // Return the tag object
+    // let tag_obj = repo.find_tag(tag_oid).into_diagnostic()?;
+
+    // git2-rs does not support signing tags yet!
+    // https://github.com/rust-lang/git2-rs/issues/1039
+    // Temporarily use process
+    use std::process::Command;
+    let status = Command::new("git")
+        .args([
+            "tag",
+            "-a",
+            &format!("v{}", new_version),
+            "-s",
+            "-m",
+            &format!("Release v{}\n\n{}", new_version, changelog),
+        ])
+        .status()
+        .into_diagnostic()?;
+
+    if !status.success() {
+        return Err(miette!("Failed to create the signed tag"));
+    }
+
+    let tag_name = format!("v{}", new_version);
+    let reference = repo
+        .revparse_single(&format!("refs/tags/{}", tag_name))
+        .into_diagnostic()?;
+    let tag_obj = reference.peel_to_tag().into_diagnostic()?;
+
+    Ok(tag_obj)
+}
+
 fn confirm_continue(question: &str) -> bool {
     let mut input = String::with_capacity(5);
     loop {
@@ -264,4 +299,42 @@ fn confirm_continue(question: &str) -> bool {
     }
 }
 
+fn generate_changelog(commit_msgs: impl Iterator<Item = String>) -> String {
+    let mut change_log = String::new();
+    write!(&mut change_log, "Changelog:").expect("Should never panic!");
+    for msg in commit_msgs {
+        write!(&mut change_log, "\n - {}", msg).expect("Should never panic!");
+    }
+    change_log
+}
 
+fn print_info(
+    latest_tag: &Tag,
+    latest_version: &Version,
+    new_tag: Option<&Tag>,
+    new_version: Option<&Version>,
+    commit_msgs: impl Iterator<Item = String>,
+) {
+    println!("Latest tag:\n  SHA: {}", latest_tag.id());
+    println!("  Version: v{}\n", latest_version);
+
+    if let Some(new_version) = new_version {
+        if let Some(new_tag) = new_tag {
+            println!("New tag:\n  SHA: {}", new_tag.id());
+            println!("  Version: v{}\n", new_version);
+            println!("Commits in the new tag:");
+            println!("\n{}", generate_changelog(commit_msgs));
+        } else {
+            println!("New version: v{}\n", new_version);
+            println!("Command: \ngit tag -a v{new_version} -s -m \"Release v{new_version}\n");
+            print!("Changelog:");
+            for msg in commit_msgs {
+                print!("\n- {}", msg);
+            }
+            println!("\"")
+        }
+    } else {
+        println!("Commits since the latest tag:");
+        println!("\n{}", generate_changelog(commit_msgs));
+    }
+}
