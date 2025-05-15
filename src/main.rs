@@ -3,6 +3,7 @@ mod args;
 use args::CliArgs;
 use args::VersionBump;
 use clap::Parser;
+use colored::Colorize;
 use git2::Commit;
 use git2::Cred;
 use git2::FetchOptions;
@@ -74,6 +75,7 @@ fn main() -> MietteResult<()> {
     });
 
     let head_ref = repo.head().into_diagnostic()?;
+    let mut in_master = true;
     if head_ref.is_branch() {
         if let Some(branch_name) = head_ref.shorthand() {
             if !["main", "master"].contains(&branch_name) {
@@ -85,18 +87,29 @@ fn main() -> MietteResult<()> {
                     )
                     .red()
                 );
+                in_master = false;
             }
         }
     }
 
     println!("Latest tag:\n  SHA: {}", latest_tag.id());
     println!("  Version: v{}\n", latest_version);
+
     if let Some(new_version) = new_version {
-        println!("New version: v{}\n", new_version);
-    }
-    println!("Commits:");
-    for msg in commit_msgs {
-        println!("  {}", msg);
+        if in_master {
+            println!("New version: v{}\n", new_version);
+            println!("Command: \ngit tag -a v{new_version} -s -m \"Release v{new_version}\n");
+            print!("Changelog:");
+            for msg in commit_msgs {
+                print!("\n- {}", msg);
+            }
+            println!("\"")
+        }
+    } else {
+        println!("Commits:");
+        for msg in commit_msgs {
+            println!("  {}", msg);
+        }
     }
 
     Ok(())
