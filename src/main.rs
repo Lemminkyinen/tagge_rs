@@ -82,10 +82,10 @@ fn main() -> MietteResult<()> {
                 println!(
                     "{}",
                     format!(
-                        "Warning: You are on branch '{}', not 'main' or 'master'!\n",
+                        "Note: You are on branch '{}', not 'main' or 'master'!\n",
                         branch_name
                     )
-                    .red()
+                    .yellow()
                 );
                 in_master = false;
             }
