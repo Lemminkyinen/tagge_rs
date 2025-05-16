@@ -88,7 +88,7 @@ fn main() -> MietteResult<()> {
             )?;
             (Some(new_tag), Some(new_version))
         } else {
-            (None, None)
+            (None, Some(bump_version(&latest_version, &bump)))
         }
     } else {
         (None, None)
