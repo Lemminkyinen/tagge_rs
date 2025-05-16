@@ -112,6 +112,7 @@ fn make_ssh_callbacks<'a>() -> MietteResult<RemoteCallbacks<'a>> {
     callbacks.credentials({
         move |_url, username_from_url, _allowed_types| {
             let username = username_from_url.unwrap();
+            tracing::info!("git username: {username}");
             Cred::ssh_key_from_agent(username)
         }
     });
