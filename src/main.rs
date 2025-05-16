@@ -15,6 +15,8 @@ use miette::IntoDiagnostic;
 use miette::Result as MietteResult;
 use miette::miette;
 use semver::Version;
+use std::fmt;
+use std::fmt::Display;
 use std::fmt::Write as FmtWrite;
 use std::io;
 use std::io::Write;
@@ -308,6 +310,29 @@ fn generate_changelog(commit_msgs: impl Iterator<Item = String>) -> String {
     change_log
 }
 
+enum MsgType {
+    New,
+    Latest,
+}
+
+impl Display for MsgType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Latest => "Latest",
+            Self::New => "New",
+        };
+        write!(f, "{s}",)
+    }
+}
+
+fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &Version) -> String {
+    let mut msg = String::new();
+
+    writeln!(msg, "{msg_type} tag:\n  SHA: {}", tag.id()).expect("Should never fail");
+    writeln!(msg, "  Version: v{}\n", version).expect("Should never fail");
+    msg
+}
+
 fn print_info(
     latest_tag: &Tag,
     latest_version: &Version,
@@ -315,13 +340,14 @@ fn print_info(
     new_version: Option<&Version>,
     commit_msgs: impl Iterator<Item = String>,
 ) {
-    println!("Latest tag:\n  SHA: {}", latest_tag.id());
-    println!("  Version: v{}\n", latest_version);
+    let latest_tag = generate_tag_msg(MsgType::Latest, latest_tag, latest_version);
+    println!("{latest_tag}");
 
     if let Some(new_version) = new_version {
         if let Some(new_tag) = new_tag {
-            println!("New tag:\n  SHA: {}", new_tag.id());
-            println!("  Version: v{}\n", new_version);
+            let new_tag = generate_tag_msg(MsgType::New, new_tag, new_version);
+            println!("{new_tag}");
+
             println!("Commits in the new tag:");
             println!("\n{}", generate_changelog(commit_msgs));
         } else {
