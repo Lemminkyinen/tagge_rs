@@ -12,6 +12,10 @@ pub struct CliArgs {
     )]
     pub bump: Option<VersionBump>,
 
+    /// Use commit SHA hash in changelog
+    #[arg(short, long)]
+    pub use_sha: bool,
+
     /// Dry run, only print the tag command, do not create a tag
     #[arg(short, long)]
     pub dry_run: bool,

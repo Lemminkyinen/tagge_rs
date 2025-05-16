@@ -71,12 +71,21 @@ fn main() -> MietteResult<()> {
 
     // Make nice messages "<SHA:7> <commit summary>" TODO PR
     let commit_msgs = commits.iter().map(|c| {
+        let mut msg = String::new();
         let summary = c.summary().unwrap_or_default();
-        format!(
-            "{} {}",
-            c.id().to_string().chars().take(7).collect::<String>(),
-            summary
-        )
+
+        // Write SHA if requested
+        if cli_args.use_sha {
+            write!(
+                msg,
+                "{} ",
+                c.id().to_string().chars().take(7).collect::<String>()
+            )
+            .expect("Should never fail!");
+        }
+
+        write!(msg, "{}", summary).expect("Should never fail");
+        msg
     });
 
     // If we want to bump
