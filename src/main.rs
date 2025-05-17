@@ -4,6 +4,7 @@ use args::CliArgs;
 use args::VersionBump;
 use clap::Parser;
 use colored::Colorize;
+use futures::future::join_all;
 use git2::Commit;
 use git2::Cred;
 use git2::FetchOptions;
@@ -14,6 +15,8 @@ use miette::Context;
 use miette::IntoDiagnostic;
 use miette::Result as MietteResult;
 use miette::miette;
+use octocrab::Octocrab;
+use octocrab::models::pulls::PullRequest;
 use semver::Version;
 use std::fmt;
 use std::fmt::Display;
@@ -22,7 +25,8 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 
-fn main() -> MietteResult<()> {
+#[tokio::main]
+async fn main() -> MietteResult<()> {
     let cli_args = CliArgs::parse();
 
     if cli_args.debug {
@@ -31,6 +35,7 @@ fn main() -> MietteResult<()> {
     }
 
     let repo = repository_from_path(&cli_args.path())?;
+    let (repo_owner, repo_name) = github_owner_and_repo(&repo)?;
 
     // Check branch
     let head_ref = repo.head().into_diagnostic()?;
@@ -57,8 +62,24 @@ fn main() -> MietteResult<()> {
         }
     }
 
+    let mut git_fetch_task = None;
     if !cli_args.no_fetch {
-        git_fetch(&repo)?;
+        git_fetch_task = Some(tokio::task::spawn_blocking({
+            let repo = repository_from_path(&cli_args.path())
+                .expect("If we opened repo once without panic, we can do it again (hopefully)");
+            move || git_fetch(&repo)
+        }));
+        tracing::info!("Git fetch future created!");
+
+        // If there is no prs to be fetched await now
+        if !cli_args.use_pr {
+            git_fetch_task
+                .as_mut()
+                .unwrap()
+                .await
+                .expect("Failed to handle blocking thread!")?;
+            tracing::info!("Git fetch future awaited!");
+        }
     }
 
     let Some((latest_tag, latest_version)) = latest_tag(&repo) else {
@@ -68,6 +89,33 @@ fn main() -> MietteResult<()> {
 
     // Get commits between the tag and head
     let commits = commits_between_tag_and_head(&repo, &latest_tag)?;
+
+    let prs = if cli_args.use_pr {
+        let commit_hashes = commits.iter().map(|c| c.id().to_string());
+
+        let token = cli_args.gh_token.or_else(|| get_gh_token().ok());
+        if let Some(token) = token {
+            let fetch_prs_task = fetch_prs(&token, &repo_owner, &repo_name, commit_hashes);
+            tracing::info!("Fetch PRs future created!");
+            if let Some(git_fetch) = git_fetch_task {
+                let (prs_res, git_fetch_res) = tokio::join!(fetch_prs_task, git_fetch);
+                git_fetch_res.unwrap()?;
+                tracing::info!("Git fetch future awaited!");
+                let res = Some(prs_res?);
+                tracing::info!("Fetch PRs future awaited!");
+                res
+            } else {
+                let res = Some(fetch_prs_task.await?);
+                tracing::info!("Fetch PRs future awaited!");
+                res
+            }
+        } else {
+            println!("No Github token provided!");
+            return Ok(());
+        }
+    } else {
+        None
+    };
 
     // Make nice messages "<SHA:7> <commit summary>" TODO PR
     let commit_msgs = commits.iter().map(|c| {
@@ -85,6 +133,20 @@ fn main() -> MietteResult<()> {
         }
 
         write!(msg, "{}", summary).expect("Should never fail");
+
+        if let Some(prs) = &prs {
+            if let Some(pr_num) = prs.iter().find_map(|(commit_sha, pr_num)| {
+                if *commit_sha == c.id().to_string() {
+                    Some(pr_num)
+                } else {
+                    None
+                }
+            }) {
+                write!(msg, " (#{})", pr_num).expect("Should never fail");
+            } else {
+                write!(msg, " (N/A)").expect("Should not fail");
+            }
+        }
         msg
     });
 
@@ -114,6 +176,65 @@ fn main() -> MietteResult<()> {
     );
 
     Ok(())
+}
+
+fn github_owner_and_repo(repo: &Repository) -> MietteResult<(String, String)> {
+    let binding = repo.find_remote("origin").into_diagnostic()?;
+    let url = binding
+        .url()
+        .ok_or_else(|| miette!("No url!"))?
+        .trim_end_matches(".git");
+
+    url.strip_prefix("git@github.com:")
+        .or_else(|| url.strip_prefix("https://github.com/"))
+        .and_then(|s| s.split_once('/'))
+        .map(|(owner, repo)| (owner.to_string(), repo.to_string()))
+        .ok_or_else(|| miette!("Failed to get repo owner and name"))
+}
+
+fn get_gh_token() -> MietteResult<String> {
+    std::env::var("GH_TOKEN").into_diagnostic()
+}
+
+async fn fetch_prs(
+    token: &str,
+    owner: &str,
+    repo_name: &str,
+    commit_shas: impl Iterator<Item = String>,
+) -> MietteResult<Vec<(String, u64)>> {
+    let octocrab = Octocrab::builder()
+        .personal_token(token)
+        .build()
+        .into_diagnostic()?;
+
+    // Prepare all requests as futures
+    let fetches = commit_shas.into_iter().map(|sha| {
+        let octocrab = octocrab.clone();
+        let owner = owner.to_string();
+        let repo_name = repo_name.to_string();
+        async move {
+            octocrab
+                .get::<Vec<PullRequest>, _, _>(
+                    format!("/repos/{owner}/{repo_name}/commits/{sha}/pulls"),
+                    None::<&()>,
+                )
+                .await
+                .map(|pulls| {
+                    pulls
+                        .into_iter()
+                        .map(|pr| (sha.clone(), pr.number))
+                        .collect::<Vec<(String, u64)>>()
+                })
+                .unwrap_or_default()
+        }
+    });
+
+    // Run all fetches concurrently
+    let results = join_all(fetches).await;
+
+    // Flatten all PR numbers into a single Vec
+    let pr_numbers: Vec<(String, u64)> = results.into_iter().flatten().collect();
+    Ok(pr_numbers)
 }
 
 fn make_ssh_callbacks<'a>() -> MietteResult<RemoteCallbacks<'a>> {
@@ -339,7 +460,7 @@ fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &Version) -> String {
     let mut msg = String::new();
 
     writeln!(msg, "{msg_type} tag:\n  SHA: {}", tag.id()).expect("Should never fail");
-    writeln!(msg, "  Version: v{}\n", version).expect("Should never fail");
+    writeln!(msg, "  Version: v{}", version).expect("Should never fail");
     msg
 }
 

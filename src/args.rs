@@ -16,6 +16,10 @@ pub struct CliArgs {
     #[arg(short, long)]
     pub use_sha: bool,
 
+    /// Use PR tags in changelog
+    #[arg(short, long)]
+    pub use_pr: bool,
+
     /// Dry run, only print the tag command, do not create a tag
     #[arg(short, long)]
     pub dry_run: bool,
@@ -27,6 +31,10 @@ pub struct CliArgs {
     /// Skip fetching git tags
     #[arg(long)]
     pub no_fetch: bool,
+
+    /// Github token for fetching information about pull requests / commits
+    #[arg(long)]
+    pub gh_token: Option<String>,
 
     /// Add additional debug logging
     #[arg(long)]
