@@ -13,11 +13,11 @@ pub struct CliArgs {
     pub bump: Option<VersionBump>,
 
     /// Use commit SHA hash in changelog
-    #[arg(short, long)]
+    #[arg(short = 's', long)]
     pub use_sha: bool,
 
     /// Use PR tags in changelog
-    #[arg(short, long)]
+    #[arg(short = 'r', long)]
     pub use_pr: bool,
 
     /// Dry run, only print the tag command, do not create a tag
