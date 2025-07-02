@@ -110,7 +110,18 @@ async fn main() -> MietteResult<()> {
                 res
             }
         } else {
-            println!("No Github token provided!");
+            println!(
+                "{}",
+                "❌ No GitHub token provided!
+Please provide a GitHub token using the --gh-token option
+or set the GH_TOKEN environment variable.
+
+Example:
+    export GH_TOKEN=your_token_here
+
+See: https://github.com/settings/tokens for more info."
+                    .red()
+            );
             return Ok(());
         }
     } else {
