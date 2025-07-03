@@ -67,11 +67,8 @@ See: https://github.com/settings/tokens for more info."
             if !["main", "master"].contains(&branch_name) {
                 println!(
                     "{}",
-                    format!(
-                        "Note: You are on branch '{}', not 'main' or 'master'!\n",
-                        branch_name
-                    )
-                    .yellow()
+                    format!("Note: You are on branch '{branch_name}', not 'main' or 'master'!\n")
+                        .yellow()
                 );
             }
             // No need to confirm if:
@@ -150,7 +147,7 @@ See: https://github.com/settings/tokens for more info."
             .expect("Should never fail!");
         }
 
-        write!(msg, "{}", summary).expect("Should never fail");
+        write!(msg, "{summary}").expect("Should never fail");
 
         if let Some(prs) = &prs {
             if let Some(pr_num) = prs.iter().find_map(|(commit_sha, pr_num)| {
@@ -160,7 +157,7 @@ See: https://github.com/settings/tokens for more info."
                     None
                 }
             }) {
-                write!(msg, " (#{})", pr_num).expect("Should never fail");
+                write!(msg, " (#{pr_num})").expect("Should never fail");
             } else {
                 write!(msg, " (N/A)").expect("Should not fail");
             }
@@ -325,7 +322,7 @@ fn latest_tag(repo: &Repository) -> Option<(Tag, Version)> {
     tracing::info!("Found tag name: {}", tag_name);
     // Find the Tag object by name
     let reference = repo
-        .revparse_single(&format!("refs/tags/{}", tag_name))
+        .revparse_single(&format!("refs/tags/{tag_name}"))
         .ok()?;
     let tag = reference.peel_to_tag().ok()?; // annotated tags only (git tag -a)
     Some((tag, version))
@@ -407,10 +404,10 @@ fn create_tag<'a>(
         .args([
             "tag",
             "-a",
-            &format!("v{}", new_version),
+            &format!("v{new_version}"),
             "-s",
             "-m",
-            &format!("Release v{}\n\n{}", new_version, changelog),
+            &format!("Release v{new_version}\n\n{changelog}"),
         ])
         .status()
         .into_diagnostic()?;
@@ -419,9 +416,9 @@ fn create_tag<'a>(
         return Err(miette!("Failed to create the signed tag"));
     }
 
-    let tag_name = format!("v{}", new_version);
+    let tag_name = format!("v{new_version}");
     let reference = repo
-        .revparse_single(&format!("refs/tags/{}", tag_name))
+        .revparse_single(&format!("refs/tags/{tag_name}"))
         .into_diagnostic()?;
     let tag_obj = reference.peel_to_tag().into_diagnostic()?;
 
@@ -454,7 +451,7 @@ fn generate_changelog(commit_msgs: impl Iterator<Item = String>) -> String {
     let mut change_log = String::new();
     write!(&mut change_log, "Changelog:").expect("Should never panic!");
     for msg in commit_msgs {
-        write!(&mut change_log, "\n - {}", msg).expect("Should never panic!");
+        write!(&mut change_log, "\n - {msg}").expect("Should never panic!");
     }
     change_log
 }
@@ -478,7 +475,7 @@ fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &Version) -> String {
     let mut msg = String::new();
 
     writeln!(msg, "{msg_type} tag:\n  SHA: {}", tag.id()).expect("Should never fail");
-    writeln!(msg, "  Version: v{}", version).expect("Should never fail");
+    writeln!(msg, "  Version: v{version}").expect("Should never fail");
     msg
 }
 
@@ -500,11 +497,11 @@ fn print_info(
             println!("Commits in the new tag:");
             println!("\n{}", generate_changelog(commit_msgs));
         } else {
-            println!("New version: v{}\n", new_version);
+            println!("New version: v{new_version}\n");
             println!("Command: \ngit tag -a v{new_version} -s -m \"Release v{new_version}\n");
             print!("Changelog:");
             for msg in commit_msgs {
-                print!("\n- {}", msg);
+                print!("\n- {msg}");
             }
             println!("\"")
         }
