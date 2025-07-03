@@ -1,5 +1,7 @@
 mod args;
+mod version;
 
+use crate::version::ToVString;
 use args::CliArgs;
 use args::VersionBump;
 use clap::Parser;
@@ -73,7 +75,7 @@ See: https://github.com/settings/tokens for more info."
             }
             // No need to confirm if:
             if !cli_args.dry_run // dryrun
-                && cli_args.bump.is_some() // no bump
+                && (cli_args.bump.is_some() || cli_args.tag.is_some()) // no bump
                 && !confirm_continue("Are you sure you want to create a tag on this branch?")
             {
                 return Ok(());
@@ -132,7 +134,7 @@ See: https://github.com/settings/tokens for more info."
         None
     };
 
-    // Make nice messages "<SHA:7> <commit summary>" TODO PR
+    // Make nice messages "<SHA:7> <commit summary>"
     let commit_msgs = commits.iter().map(|c| {
         let mut msg = String::new();
         let summary = c.summary().unwrap_or_default();
@@ -166,27 +168,38 @@ See: https://github.com/settings/tokens for more info."
     });
 
     // If we want to bump
-    let (new_tag, new_version) = if let Some(bump) = cli_args.bump {
+    let (new_tag, new_version) = if let Some(overridden_tag) = cli_args.tag {
         if !cli_args.dry_run {
-            let new_version = bump_version(&latest_version, &bump);
             let new_tag = create_tag(
+                &repo,
+                &overridden_tag,
+                &generate_changelog(commit_msgs.clone()),
+            )?;
+            (Some(new_tag), Some(overridden_tag))
+        } else {
+            (None, Some(overridden_tag))
+        }
+    } else if let Some(bump) = cli_args.bump {
+        let new_version = bump_version(&latest_version, &bump).to_v_string();
+        let new_tag = if !cli_args.dry_run {
+            Some(create_tag(
                 &repo,
                 &new_version,
                 &generate_changelog(commit_msgs.clone()),
-            )?;
-            (Some(new_tag), Some(new_version))
+            )?)
         } else {
-            (None, Some(bump_version(&latest_version, &bump)))
-        }
+            None
+        };
+        (new_tag, Some(new_version))
     } else {
         (None, None)
     };
 
     print_info(
         &latest_tag,
-        &latest_version,
+        &latest_version.to_v_string(),
         new_tag.as_ref(),
-        new_version.as_ref(),
+        new_version.as_deref(),
         commit_msgs,
     );
 
@@ -374,7 +387,7 @@ fn commits_between_tag_and_head<'a>(
 
 fn create_tag<'a>(
     repo: &'a Repository,
-    new_version: &Version,
+    new_version: &str,
     changelog: &str,
 ) -> MietteResult<Tag<'a>> {
     // Get HEAD commit
@@ -387,7 +400,7 @@ fn create_tag<'a>(
 
     // Tagger signature (from git config or fallback)
     // let tagger = repo.signature().into_diagnostic()?;
-    // let tag_name = format!("v{new_version}");
+    // let tag_name = format!("{new_version}");
     // Create the tag
     // let tag_oid = repo
     //     .tag(&tag_name, &obj, &tagger, "testiii", false)
@@ -404,10 +417,10 @@ fn create_tag<'a>(
         .args([
             "tag",
             "-a",
-            &format!("v{new_version}"),
+            new_version,
             "-s",
             "-m",
-            &format!("Release v{new_version}\n\n{changelog}"),
+            &format!("Release {new_version}\n\n{changelog}"),
         ])
         .status()
         .into_diagnostic()?;
@@ -416,9 +429,8 @@ fn create_tag<'a>(
         return Err(miette!("Failed to create the signed tag"));
     }
 
-    let tag_name = format!("v{new_version}");
     let reference = repo
-        .revparse_single(&format!("refs/tags/{tag_name}"))
+        .revparse_single(&format!("refs/tags/{new_version}"))
         .into_diagnostic()?;
     let tag_obj = reference.peel_to_tag().into_diagnostic()?;
 
@@ -471,19 +483,19 @@ impl Display for MsgType {
     }
 }
 
-fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &Version) -> String {
+fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &str) -> String {
     let mut msg = String::new();
 
     writeln!(msg, "{msg_type} tag:\n  SHA: {}", tag.id()).expect("Should never fail");
-    writeln!(msg, "  Version: v{version}").expect("Should never fail");
+    writeln!(msg, "  Version: {version}").expect("Should never fail");
     msg
 }
 
 fn print_info(
     latest_tag: &Tag,
-    latest_version: &Version,
+    latest_version: &str,
     new_tag: Option<&Tag>,
-    new_version: Option<&Version>,
+    new_version: Option<&str>,
     commit_msgs: impl Iterator<Item = String>,
 ) {
     let latest_tag = generate_tag_msg(MsgType::Latest, latest_tag, latest_version);
@@ -497,8 +509,8 @@ fn print_info(
             println!("Commits in the new tag:");
             println!("\n{}", generate_changelog(commit_msgs));
         } else {
-            println!("New version: v{new_version}\n");
-            println!("Command: \ngit tag -a v{new_version} -s -m \"Release v{new_version}\n");
+            println!("New version: {new_version}\n");
+            println!("Command: \ngit tag -a {new_version} -s -m \"Release {new_version}\n");
             print!("Changelog:");
             for msg in commit_msgs {
                 print!("\n- {msg}");

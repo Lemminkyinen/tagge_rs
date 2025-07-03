@@ -12,6 +12,10 @@ pub struct CliArgs {
     )]
     pub bump: Option<VersionBump>,
 
+    /// Override the auto-generated tag
+    #[arg(short, long)]
+    pub tag: Option<String>,
+
     /// Use commit SHA hash in changelog
     #[arg(short = 's', long)]
     pub use_sha: bool,
