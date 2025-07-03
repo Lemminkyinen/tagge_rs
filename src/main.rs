@@ -27,7 +27,7 @@ use std::path::Path;
 
 #[tokio::main]
 async fn main() -> MietteResult<()> {
-    let cli_args = CliArgs::parse();
+    let mut cli_args = CliArgs::parse();
 
     if cli_args.debug {
         tracing_subscriber::fmt::init();
@@ -36,6 +36,28 @@ async fn main() -> MietteResult<()> {
 
     let repo = repository_from_path(&cli_args.path())?;
     let (repo_owner, repo_name) = github_owner_and_repo(&repo)?;
+
+    // Check gh token if PR tags are requested
+    let token = if cli_args.use_pr {
+        let Some(token) = cli_args.gh_token.take().or_else(|| get_gh_token().ok()) else {
+            println!(
+                "{}",
+                "❌ No GitHub token provided!
+Please provide a GitHub token using the --gh-token option
+or set the GH_TOKEN environment variable.
+
+Example:
+    export GH_TOKEN=your_token_here
+
+See: https://github.com/settings/tokens for more info."
+                    .red()
+            );
+            return Ok(());
+        };
+        Some(token)
+    } else {
+        None
+    };
 
     // Check branch
     let head_ref = repo.head().into_diagnostic()?;
@@ -90,39 +112,24 @@ async fn main() -> MietteResult<()> {
     // Get commits between the tag and head
     let commits = commits_between_tag_and_head(&repo, &latest_tag)?;
 
-    let prs = if cli_args.use_pr {
+    let prs = if let Some(token) = token
+        && cli_args.use_pr
+    {
         let commit_hashes = commits.iter().map(|c| c.id().to_string());
 
-        let token = cli_args.gh_token.or_else(|| get_gh_token().ok());
-        if let Some(token) = token {
-            let fetch_prs_task = fetch_prs(&token, &repo_owner, &repo_name, commit_hashes);
-            tracing::info!("Fetch PRs future created!");
-            if let Some(git_fetch) = git_fetch_task {
-                let (prs_res, git_fetch_res) = tokio::join!(fetch_prs_task, git_fetch);
-                git_fetch_res.unwrap()?;
-                tracing::info!("Git fetch future awaited!");
-                let res = Some(prs_res?);
-                tracing::info!("Fetch PRs future awaited!");
-                res
-            } else {
-                let res = Some(fetch_prs_task.await?);
-                tracing::info!("Fetch PRs future awaited!");
-                res
-            }
+        let fetch_prs_task = fetch_prs(&token, &repo_owner, &repo_name, commit_hashes);
+        tracing::info!("Fetch PRs future created!");
+        if let Some(git_fetch) = git_fetch_task {
+            let (prs_res, git_fetch_res) = tokio::join!(fetch_prs_task, git_fetch);
+            git_fetch_res.unwrap()?;
+            tracing::info!("Git fetch future awaited!");
+            let res = Some(prs_res?);
+            tracing::info!("Fetch PRs future awaited!");
+            res
         } else {
-            println!(
-                "{}",
-                "❌ No GitHub token provided!
-Please provide a GitHub token using the --gh-token option
-or set the GH_TOKEN environment variable.
-
-Example:
-    export GH_TOKEN=your_token_here
-
-See: https://github.com/settings/tokens for more info."
-                    .red()
-            );
-            return Ok(());
+            let res = Some(fetch_prs_task.await?);
+            tracing::info!("Fetch PRs future awaited!");
+            res
         }
     } else {
         None
