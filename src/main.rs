@@ -461,8 +461,12 @@ fn confirm_continue(question: &str) -> bool {
 
 fn generate_changelog(commit_msgs: impl Iterator<Item = String>) -> String {
     let mut change_log = String::new();
-    write!(&mut change_log, "Changelog:").expect("Should never panic!");
+    let mut first = true;
     for msg in commit_msgs {
+        if first {
+            write!(&mut change_log, "Changelog:").expect("Should never panic!");
+            first = false;
+        }
         write!(&mut change_log, "\n - {msg}").expect("Should never panic!");
     }
     change_log
@@ -491,6 +495,16 @@ fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &str) -> String {
     msg
 }
 
+fn print_changelog(commit_msgs: impl Iterator<Item = String>) {
+    let changelog = generate_changelog(commit_msgs);
+    if !changelog.is_empty() {
+        println!("Commits in the new tag:");
+        println!("\n{changelog}",);
+    } else {
+        println!("No new commits since the latest tag.")
+    }
+}
+
 fn print_info(
     latest_tag: &Tag,
     latest_version: &str,
@@ -505,9 +519,7 @@ fn print_info(
         if let Some(new_tag) = new_tag {
             let new_tag = generate_tag_msg(MsgType::New, new_tag, new_version);
             println!("{new_tag}");
-
-            println!("Commits in the new tag:");
-            println!("\n{}", generate_changelog(commit_msgs));
+            print_changelog(commit_msgs);
         } else {
             println!("New version: {new_version}\n");
             println!("Command: \ngit tag -a {new_version} -s -m \"Release {new_version}\n");
@@ -518,7 +530,6 @@ fn print_info(
             println!("\"")
         }
     } else {
-        println!("Commits since the latest tag:");
-        println!("\n{}", generate_changelog(commit_msgs));
+        print_changelog(commit_msgs);
     }
 }
