@@ -26,6 +26,7 @@ use std::fmt::Write as FmtWrite;
 use std::io;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 #[tokio::main]
 async fn main() -> MietteResult<()> {
@@ -272,11 +273,41 @@ async fn fetch_prs(
 
 fn make_ssh_callbacks<'a>() -> MietteResult<RemoteCallbacks<'a>> {
     let mut callbacks = RemoteCallbacks::new();
+    let attempt_count = std::cell::RefCell::new(0);
+
     callbacks.credentials({
-        move |_url, username_from_url, _allowed_types| {
-            let username = username_from_url.unwrap();
-            tracing::info!("SSH Callback: url: {_url}, git username: {username}");
-            Cred::ssh_key_from_agent(username)
+        let attempt_count = attempt_count.clone();
+        move |url, username_from_url, _allowed_types| {
+            let mut count = attempt_count.borrow_mut();
+            *count += 1;
+
+            if *count > 3 {
+                return Err(git2::Error::from_str(
+                    "SSH authentication failed after 3 attempts",
+                ));
+            }
+
+            let username = username_from_url.unwrap_or("git");
+            tracing::info!(
+                "SSH Callback attempt {}: url: {url}, git username: {username}",
+                *count
+            );
+
+            tracing::info!("Trying to create ssh credentials from agent.");
+            match Cred::ssh_key_from_agent(username) {
+                Ok(cred) => {
+                    tracing::info!(
+                        "SSH key successfully obtained from agent for user '{username}'"
+                    );
+                    Ok(cred)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to obtain SSH key from agent for user '{username}': {e}"
+                    );
+                    Err(e)
+                }
+            }
         }
     });
     Ok(callbacks)
@@ -310,16 +341,34 @@ fn git_fetch(repo: &Repository) -> MietteResult<()> {
     fetch_options.remote_callbacks(callbacks);
 
     // Fetch tags
-    origin
-        .fetch(
-            &[
-                "refs/tags/*:refs/tags/*",
-                "refs/heads/*:refs/remotes/origin/*",
-            ],
-            Some(&mut fetch_options),
-            None,
-        )
-        .into_diagnostic()?;
+    match origin.fetch(
+        &[
+            "refs/tags/*:refs/tags/*",
+            "refs/heads/*:refs/remotes/origin/*",
+        ],
+        Some(&mut fetch_options),
+        None,
+    ) {
+        Ok(_) => {
+            tracing::info!("Git fetch completed successfully via libgit2");
+        }
+        Err(e) => {
+            // Git/ssh-agent configuration probably faulty
+            tracing::warn!("libgit2 fetch failed: {e}. Falling back to command-line git fetch");
+            tracing::info!("Git / ssh-agent configuration probably faulty.");
+            // Perform command "git fetch"
+            tracing::info!("Performing command line git fetch!");
+            let status = Command::new("git")
+                .args(["fetch"])
+                .status()
+                .into_diagnostic()?;
+
+            if !status.success() {
+                return Err(miette!("Both libgit2 and command-line git fetch failed"));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -417,7 +466,6 @@ fn create_tag<'a>(
     // git2-rs does not support signing tags yet!
     // https://github.com/rust-lang/git2-rs/issues/1039
     // Temporarily use process
-    use std::process::Command;
     let status = Command::new("git")
         .args([
             "tag",
