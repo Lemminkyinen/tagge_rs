@@ -18,6 +18,7 @@ use miette::IntoDiagnostic;
 use miette::Result as MietteResult;
 use miette::miette;
 use octocrab::Octocrab;
+use octocrab::models::IssueState;
 use octocrab::models::pulls::PullRequest;
 use semver::Version;
 use std::fmt;
@@ -159,16 +160,16 @@ See: https://github.com/settings/tokens for more info."
         write!(msg, "{summary}").expect("Should never fail");
 
         if let Some(prs) = &prs {
-            if let Some(pr_num) = prs.iter().find_map(|(commit_sha, pr_num)| {
-                if *commit_sha == c.id().to_string() {
-                    Some(pr_num)
-                } else {
-                    None
-                }
-            }) {
-                write!(msg, " (#{pr_num})").expect("Should never fail");
-            } else {
-                write!(msg, " (N/A)").expect("Should not fail");
+            // Find the PR number for this commit
+            let commit_id = c.id().to_string();
+            let found_pr = prs
+                .iter()
+                .find(|(sha, _)| *sha == commit_id)
+                .and_then(|(_, pr_opt)| *pr_opt);
+
+            match found_pr {
+                Some(pr_num) => write!(msg, " (#{pr_num})").expect("Should never fail"),
+                None => write!(msg, " (N/A)").expect("Should not fail"),
             }
         }
         msg
@@ -236,11 +237,13 @@ async fn fetch_prs(
     owner: &str,
     repo_name: &str,
     commit_shas: impl Iterator<Item = String>,
-) -> MietteResult<Vec<(String, u64)>> {
+) -> MietteResult<Vec<(String, Option<u64>)>> {
     let octocrab = Octocrab::builder()
         .personal_token(token)
         .build()
         .into_diagnostic()?;
+
+    tracing::info!("Starting PR fetching for commits");
 
     // Prepare all requests as futures
     let fetches = commit_shas.into_iter().map(|sha| {
@@ -248,27 +251,58 @@ async fn fetch_prs(
         let owner = owner.to_string();
         let repo_name = repo_name.to_string();
         async move {
-            octocrab
+            tracing::debug!("Fetching PRs for commit: {}", sha);
+            match octocrab
                 .get::<Vec<PullRequest>, _, _>(
                     format!("/repos/{owner}/{repo_name}/commits/{sha}/pulls"),
                     None::<&()>,
                 )
                 .await
-                .map(|pulls| {
-                    pulls
-                        .into_iter()
-                        .map(|pr| (sha.clone(), pr.number))
-                        .collect::<Vec<(String, u64)>>()
-                })
-                .unwrap_or_default()
+            {
+                Ok(pulls) => {
+                    if pulls.is_empty() {
+                        tracing::info!("No PRs found for commit {}", sha);
+                        (sha, None)
+                    } else {
+                        // First try to find a closed PR
+                        if let Some(closed_pr) =
+                            pulls.iter().find(|pr| pr.state == Some(IssueState::Closed))
+                        {
+                            tracing::info!(
+                                "Found closed PR #{} for commit {}",
+                                closed_pr.number,
+                                sha
+                            );
+                            (sha, Some(closed_pr.number))
+                        } else {
+                            // If no closed PR exists, use the first one
+                            let pr = &pulls[0];
+                            tracing::info!(
+                                "Using open PR #{} for commit {} (no closed PRs found)",
+                                pr.number,
+                                sha
+                            );
+                            (sha, Some(pr.number))
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to fetch PRs for commit {}: {}", sha, e);
+                    (sha, None)
+                }
+            }
         }
     });
+
+    tracing::info!("Executing PR fetch requests in parallel");
 
     // Run all fetches concurrently
     let results = join_all(fetches).await;
 
     // Flatten all PR numbers into a single Vec
-    let pr_numbers: Vec<(String, u64)> = results.into_iter().flatten().collect();
+    let pr_numbers: Vec<(String, Option<u64>)> = results.into_iter().collect();
+    tracing::info!("Found {} PR associations", pr_numbers.len());
+
     Ok(pr_numbers)
 }
 
