@@ -39,6 +39,8 @@ async fn main() -> MietteResult<()> {
     let repo = repository_from_path(&cli_args.path())?;
     let (repo_owner, repo_name) = github_owner_and_repo(&repo)?;
 
+    tracing::info!("Repo owner: {repo_owner}, repo name: {repo_name}");
+
     // Check gh token if PR tags are requested
     let token = if cli_args.use_pr {
         let Some(token) = cli_args.gh_token.take().or_else(|| get_gh_token().ok()) else {
@@ -273,7 +275,7 @@ fn make_ssh_callbacks<'a>() -> MietteResult<RemoteCallbacks<'a>> {
     callbacks.credentials({
         move |_url, username_from_url, _allowed_types| {
             let username = username_from_url.unwrap();
-            tracing::info!("git username: {username}");
+            tracing::info!("SSH Callback: url: {_url}, git username: {username}");
             Cred::ssh_key_from_agent(username)
         }
     });
