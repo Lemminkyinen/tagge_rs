@@ -27,6 +27,7 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+use std::process::Stdio;
 
 #[tokio::main]
 async fn main() -> MietteResult<()> {
@@ -358,12 +359,17 @@ fn git_fetch(repo: &Repository) -> MietteResult<()> {
             tracing::info!("Git / ssh-agent configuration probably faulty.");
             // Perform command "git fetch"
             tracing::info!("Performing command line git fetch!");
-            let status = Command::new("git")
+            let output = Command::new("git")
                 .args(["fetch"])
-                .status()
+                .stdout(Stdio::piped())
+                .output()
                 .into_diagnostic()?;
 
-            if !status.success() {
+            if !output.status.success() {
+                match String::from_utf8(output.stdout) {
+                    Ok(stdout) => tracing::info!("Git fetch stdout: \n{stdout}"),
+                    Err(e) => tracing::error!("Failed to parse git fetch output: {e}"),
+                }
                 return Err(miette!("Both libgit2 and command-line git fetch failed"));
             }
         }
