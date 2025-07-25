@@ -66,7 +66,10 @@ See: https://github.com/settings/tokens for more info."
     if head_ref.is_branch() {
         if let Some(branch_name) = head_ref.shorthand() {
             // Notify user main/master is not selected
-            if !["main", "master"].contains(&branch_name) {
+            if !["main", "master"]
+                .iter()
+                .any(|name| branch_name.contains(name))
+            {
                 println!(
                     "{}",
                     format!("Note: You are on branch '{branch_name}', not 'main' or 'master'!\n")
