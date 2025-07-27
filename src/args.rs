@@ -16,6 +16,10 @@ pub struct CliArgs {
     #[arg(short, long)]
     pub tag: Option<String>,
 
+    /// Extra suffix for the tag
+    #[arg(long)]
+    pub suffix: Option<String>,
+
     /// Use commit SHA hash in changelog
     #[arg(short = 's', long)]
     pub use_sha: bool,

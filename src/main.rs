@@ -188,7 +188,13 @@ See: https://github.com/settings/tokens for more info."
             (None, Some(overridden_tag))
         }
     } else if let Some(bump) = cli_args.bump {
-        let new_version = bump_version(&latest_version, &bump).to_v_string();
+        let mut new_version = bump_version(&latest_version, &bump).to_v_string();
+
+        // Add optional extra suffix
+        if let Some(suffix) = cli_args.suffix {
+            write!(new_version, "-{suffix}").expect("Writing to a mutable string should not fail!");
+        }
+
         let new_tag = if !cli_args.dry_run {
             Some(create_tag(
                 &repo,
