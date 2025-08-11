@@ -38,8 +38,8 @@ async fn main() -> MietteResult<()> {
         tracing_subscriber::fmt::init();
         tracing::info!("Running in debug mode!");
     }
-
-    let repo = repository_from_path(&cli_args.path())?;
+    let repo_path = cli_args.path()?;
+    let repo = repository_from_path(&repo_path, cli_args.path == ".")?;
     let (repo_owner, repo_name) = github_owner_and_repo(&repo)?;
 
     tracing::info!("Repo owner: {repo_owner}, repo name: {repo_name}");
@@ -94,7 +94,7 @@ See: https://github.com/settings/tokens for more info."
     let mut git_fetch_task = None;
     if !cli_args.no_fetch {
         git_fetch_task = Some(tokio::task::spawn_blocking({
-            let repo = repository_from_path(&cli_args.path())
+            let repo = repository_from_path(&repo_path, cli_args.path == ".")
                 .expect("If we opened repo once without panic, we can do it again (hopefully)");
             move || git_fetch(&repo)
         }));
@@ -354,17 +354,49 @@ fn make_ssh_callbacks<'a>() -> MietteResult<RemoteCallbacks<'a>> {
     Ok(callbacks)
 }
 
-fn repository_from_path(path: &Path) -> MietteResult<Repository> {
-    match Repository::open(path) {
-        Ok(repo) => Ok(repo),
-        Err(err) => {
-            tracing::info!("Failed to get repo {}: {}", path.display(), err);
-            Err(miette!(
+fn repository_from_path(path: &Path, curdir: bool) -> MietteResult<Repository> {
+    fn get_repo(path: &Path, make_err: impl Fn() -> miette::Report) -> MietteResult<Repository> {
+        match Repository::open(path) {
+            Ok(repo) => Ok(repo),
+            Err(err) => {
+                tracing::info!("Failed to get repo {}: {}", path.display(), err);
+                Err(make_err())
+            }
+        }
+    }
+
+    if curdir {
+        let mut path_ = path.to_path_buf();
+        let mut paths = Vec::new();
+        loop {
+            paths.push(path_.display().to_string());
+            let make_err = || {
+                miette!(
+                    help = "Please check the path.",
+                    "Repository not found in: {}",
+                    paths.join(", ")
+                )
+            };
+            match get_repo(&path_, make_err) {
+                Ok(p) => return Ok(p),
+                Err(e) => {
+                    if let Some(p) = path_.parent() {
+                        path_ = p.to_path_buf();
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    } else {
+        let make_err = || {
+            miette!(
                 help = "Please check the path.",
                 "Repository not found in: {}",
                 path.display()
-            ))
-        }
+            )
+        };
+        get_repo(path, make_err)
     }
 }
 

@@ -50,8 +50,27 @@ pub struct CliArgs {
 }
 
 impl CliArgs {
-    pub fn path(&self) -> PathBuf {
-        PathBuf::from(&self.path)
+    pub fn path(&self) -> Result<PathBuf, miette::Error> {
+        let curdir = std::env::current_dir().expect("Cannot get current directory");
+        if self.path == "." {
+            return Ok(curdir);
+        }
+
+        let path = PathBuf::from(&self.path);
+        let result = if path.is_absolute() {
+            path
+        } else {
+            curdir.join(path)
+        };
+
+        if !result.exists() {
+            Err(miette::Error::msg(format!(
+                "Path {} doesn't exist!",
+                result.display()
+            )))
+        } else {
+            Ok(result)
+        }
     }
 }
 
