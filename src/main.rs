@@ -10,6 +10,7 @@ use futures::future::join_all;
 use git2::Commit;
 use git2::Cred;
 use git2::FetchOptions;
+use git2::Oid;
 use git2::RemoteCallbacks;
 use git2::Repository;
 use git2::Tag;
@@ -450,7 +451,21 @@ fn git_fetch(repo: &Repository) -> MietteResult<()> {
     Ok(())
 }
 
-fn latest_tag(repo: &Repository) -> Option<(Tag, Version)> {
+enum GitTag<'a> {
+    Lightweight(Commit<'a>),
+    Annotated(Tag<'a>),
+}
+
+impl<'a> GitTag<'a> {
+    fn target_id(&self) -> Oid {
+        match &self {
+            Self::Annotated(tag) => tag.target_id(),
+            Self::Lightweight(commit) => commit.id(),
+        }
+    }
+}
+
+fn latest_tag(repo: &Repository) -> Option<(GitTag<'_>, Version)> {
     let tag_names = repo.tag_names(None).ok()?;
     let mut latest: Option<(Version, &str)> = None;
 
@@ -465,12 +480,22 @@ fn latest_tag(repo: &Repository) -> Option<(Tag, Version)> {
     }
     let (version, tag_name) = latest?;
     tracing::info!("Found tag name: {}", tag_name);
+    tracing::info!("Found version name: {}", version);
     // Find the Tag object by name
     let reference = repo
         .revparse_single(&format!("refs/tags/{tag_name}"))
         .ok()?;
-    let tag = reference.peel_to_tag().ok()?; // annotated tags only (git tag -a)
-    Some((tag, version))
+
+    // Try annotated tag only (git tag -a)
+    let Some(tag) = reference.peel_to_tag().ok() else {
+        // Fallback: peel to commit (lightweight)
+        let commit = reference.peel_to_commit().ok()?;
+        tracing::warn!("Falling back to lightweight tag {commit:?}!");
+        return Some((GitTag::Lightweight(commit), version));
+    };
+
+    tracing::info!("Peeled tag: {tag:?}");
+    Some((GitTag::Annotated(tag), version))
 }
 
 fn bump_version(latest_version: &Version, bump: &VersionBump) -> Version {
@@ -494,7 +519,7 @@ fn bump_version(latest_version: &Version, bump: &VersionBump) -> Version {
 
 fn commits_between_tag_and_head<'a>(
     repo: &'a Repository,
-    tag: &Tag,
+    tag: &GitTag,
 ) -> MietteResult<Vec<Commit<'a>>> {
     let tag_commit = tag.target_id();
     let head = repo
@@ -618,10 +643,20 @@ impl Display for MsgType {
     }
 }
 
-fn generate_tag_msg(msg_type: MsgType, tag: &Tag, version: &str) -> String {
+fn generate_tag_msg(msg_type: MsgType, tag: &GitTag, version: &str) -> String {
     let mut msg = String::new();
 
-    writeln!(msg, "{msg_type} tag:\n  SHA: {}", tag.id()).expect("Should never fail");
+    match tag {
+        GitTag::Annotated(tag) => {
+            writeln!(msg, "{msg_type} tag:\n  SHA: {}", tag.id()).expect("Should never fail");
+            writeln!(msg, "{msg_type} commit:\n  SHA: {}", tag.target_id())
+                .expect("Should never fail");
+        }
+        GitTag::Lightweight(commit) => {
+            writeln!(msg, "{msg_type} commit:\n  SHA: {}", commit.id()).expect("Should never fail")
+        }
+    }
+
     writeln!(msg, "  Version: {version}").expect("Should never fail");
     msg
 }
@@ -637,18 +672,26 @@ fn print_changelog(commit_msgs: impl Iterator<Item = String>) {
 }
 
 fn print_info(
-    latest_tag: &Tag,
+    latest_tag: &GitTag,
     latest_version: &str,
     new_tag: Option<&Tag>,
     new_version: Option<&str>,
     commit_msgs: impl Iterator<Item = String>,
 ) {
+    if matches!(latest_tag, GitTag::Lightweight(_)) {
+        println!("NOTE: Latest tag is a lightweight tag!");
+    }
+
     let latest_tag = generate_tag_msg(MsgType::Latest, latest_tag, latest_version);
     println!("{latest_tag}");
 
     if let Some(new_version) = new_version {
         if let Some(new_tag) = new_tag {
-            let new_tag = generate_tag_msg(MsgType::New, new_tag, new_version);
+            let new_tag = generate_tag_msg(
+                MsgType::New,
+                &GitTag::Annotated(new_tag.clone()),
+                new_version,
+            );
             println!("{new_tag}");
             print_changelog(commit_msgs);
         } else {
