@@ -112,13 +112,19 @@ See: https://github.com/settings/tokens for more info."
         }
     }
 
-    let Some((latest_tag, latest_version)) = latest_tag(&repo) else {
-        println!("No tags found! Please create the first tag manually!");
-        return Ok(());
+    let (latest_tag, latest_version) = match (latest_tag(&repo), cli_args.init) {
+        (None, false) => {
+            println!(
+                "No tags found! Please create the first tag using --init (defaults to v0.1.0, override with --tag)!"
+            );
+            return Ok(());
+        }
+        (Some((t, v)), _) => (Some(t), Some(v)),
+        (None, true) => (None, None),
     };
 
     // Get commits between the tag and head
-    let commits = commits_between_tag_and_head(&repo, &latest_tag)?;
+    let commits = commits_between_tag_and_head(&repo, latest_tag.as_ref())?;
 
     let prs = if let Some(token) = token
         && cli_args.use_pr
@@ -188,8 +194,10 @@ See: https://github.com/settings/tokens for more info."
         } else {
             (None, Some(overridden_tag))
         }
-    } else if let Some(bump) = cli_args.bump {
-        let mut new_version = bump_version(&latest_version, &bump).to_v_string();
+    } else if let Some(bump) = cli_args.bump
+        && let Some(latest_version) = &latest_version
+    {
+        let mut new_version = bump_version(latest_version, &bump).to_v_string();
 
         // Add optional extra suffix
         if let Some(suffix) = cli_args.suffix {
@@ -206,13 +214,33 @@ See: https://github.com/settings/tokens for more info."
             None
         };
         (new_tag, Some(new_version))
+    } else if cli_args.init {
+        // Default to v0.1.0 for initial tag
+        let mut initial_version = Version::new(0, 1, 0).to_v_string();
+
+        // Add optional extra suffix
+        if let Some(suffix) = cli_args.suffix {
+            write!(initial_version, "-{suffix}")
+                .expect("Writing to a mutable string should not fail!");
+        }
+
+        let new_tag = if !cli_args.dry_run {
+            Some(create_tag(
+                &repo,
+                &initial_version,
+                &generate_changelog(commit_msgs.clone()),
+            )?)
+        } else {
+            None
+        };
+        (new_tag, Some(initial_version))
     } else {
         (None, None)
     };
 
     print_info(
-        &latest_tag,
-        &latest_version.to_v_string(),
+        latest_tag.as_ref(),
+        latest_version.map(|lv| lv.to_v_string()).as_deref(),
         new_tag.as_ref(),
         new_version.as_deref(),
         commit_msgs,
@@ -519,9 +547,8 @@ fn bump_version(latest_version: &Version, bump: &VersionBump) -> Version {
 
 fn commits_between_tag_and_head<'a>(
     repo: &'a Repository,
-    tag: &GitTag,
+    tag: Option<&GitTag>,
 ) -> MietteResult<Vec<Commit<'a>>> {
-    let tag_commit = tag.target_id();
     let head = repo
         .head()
         .ok()
@@ -530,7 +557,11 @@ fn commits_between_tag_and_head<'a>(
 
     let mut revwalk = repo.revwalk().into_diagnostic()?;
     revwalk.push(head).into_diagnostic()?;
-    revwalk.hide(tag_commit).into_diagnostic()?;
+
+    if let Some(tag) = tag {
+        let tag_commit = tag.target_id();
+        revwalk.hide(tag_commit).into_diagnostic()?;
+    }
 
     let mut commits = Vec::new();
     for oid_result in revwalk {
@@ -672,18 +703,21 @@ fn print_changelog(commit_msgs: impl Iterator<Item = String>) {
 }
 
 fn print_info(
-    latest_tag: &GitTag,
-    latest_version: &str,
+    latest_tag: Option<&GitTag>,
+    latest_version: Option<&str>,
     new_tag: Option<&Tag>,
     new_version: Option<&str>,
     commit_msgs: impl Iterator<Item = String>,
 ) {
-    if matches!(latest_tag, GitTag::Lightweight(_)) {
+    if matches!(latest_tag, Some(GitTag::Lightweight(_))) {
         println!("NOTE: Latest tag is a lightweight tag!");
     }
-
-    let latest_tag = generate_tag_msg(MsgType::Latest, latest_tag, latest_version);
-    println!("{latest_tag}");
+    if let (Some(latest_tag), Some(latest_version)) = (latest_tag, latest_version) {
+        let latest_tag = generate_tag_msg(MsgType::Latest, latest_tag, latest_version);
+        println!("{latest_tag}");
+    } else {
+        println!("No previous tags!");
+    }
 
     if let Some(new_version) = new_version {
         if let Some(new_tag) = new_tag {

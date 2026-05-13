@@ -16,6 +16,10 @@ pub struct CliArgs {
     #[arg(short, long)]
     pub tag: Option<String>,
 
+    /// Create the first tag. Defaults to v0.1.0. Use `--tag` to override.
+    #[arg(long)]
+    pub init: bool,
+
     /// Extra suffix for the tag
     #[arg(long)]
     pub suffix: Option<String>,
