@@ -69,26 +69,26 @@ See: https://github.com/settings/tokens for more info."
 
     // Check branch
     let head_ref = repo.head().into_diagnostic()?;
-    if head_ref.is_branch() {
-        if let Some(branch_name) = head_ref.shorthand() {
-            // Notify user main/master is not selected
-            if !["main", "master"]
-                .iter()
-                .any(|name| branch_name.contains(name))
-            {
-                println!(
-                    "{}",
-                    format!("Note: You are on branch '{branch_name}', not 'main' or 'master'!\n")
-                        .yellow()
-                );
-            }
-            // No need to confirm if:
-            if !cli_args.dry_run // dryrun
+    if head_ref.is_branch()
+        && let Some(branch_name) = head_ref.shorthand()
+    {
+        // Notify user main/master is not selected
+        if !["main", "master"]
+            .iter()
+            .any(|name| branch_name.contains(name))
+        {
+            println!(
+                "{}",
+                format!("Note: You are on branch '{branch_name}', not 'main' or 'master'!\n")
+                    .yellow()
+            );
+        }
+        // No need to confirm if:
+        if !cli_args.dry_run // dryrun
                 && (cli_args.bump.is_some() || cli_args.tag.is_some()) // no bump
                 && !confirm_continue("Are you sure you want to create a tag on this branch?")
-            {
-                return Ok(());
-            }
+        {
+            return Ok(());
         }
     }
 
