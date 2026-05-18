@@ -301,7 +301,7 @@ async fn fetch_prs(
                     } else {
                         // First try to find a closed PR
                         if let Some(closed_pr) =
-                            pulls.iter().find(|pr| pr.state == IssueState::Closed)
+                            pulls.iter().find(|pr| pr.state == Some(IssueState::Closed))
                         {
                             tracing::info!(
                                 "Found closed PR #{} for commit {}",

@@ -22,7 +22,7 @@ colored = "3.1.1"
 futures = "0.3.32"
 git2 = "0.20.4"
 miette = { version = "7.6.0", features = ["fancy"] }
-octocrab = "0.50.0"
+octocrab = "0.44.1"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
